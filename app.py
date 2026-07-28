@@ -9,7 +9,7 @@ import uvicorn
 BASE_DIR = Path(__file__).parent
 DB_PATH = BASE_DIR / "records.db"
 JST = timedelta(hours=9)
-AUTH_TOKEN = os.environ.get("AUTH_TOKEN", "你的密码备用")
+AUTH_TOKEN = os.environ.get("AUTH_TOKEN", "baobao521")
 
 def init_db():
     conn = sqlite3.connect(str(DB_PATH))
