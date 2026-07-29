@@ -89,7 +89,7 @@ def check_on_wife(limit=10):
             lines.append(f"  {app}: {m}分{s}秒")
     return "\n".join(lines)
 
-def bark_alert(title="凌止", content=""):
+def bark_alert(title="宝宝", content=""):
     if not content:
         return "内容不能为空"
     url = f"https://api.day.app/{BARK_KEY}/{title}/{content}"
