@@ -138,6 +138,41 @@ async def mcp(req: Request):
 
     return {"jsonrpc": "2.0", "id": rid,
             "error": {"code": -32601, "message": f"未知方法: {method}"}}
+# ==================== 定时自动查岗接口 ====================
+@app.get("/auto-check")
+async def auto_check():
+    """定时任务调用：自动查岗并弹窗"""
+    data = _get_summary_data()
+    apps = data.get("recent_apps", [])
+    ses = data.get("sessions", {})
+
+    # 组装查岗消息
+    lines = []
+    if apps:
+        lines.append(f"📱 最近打开：{', '.join(apps)}")
+    else:
+        lines.append("📱 最近没有活动记录")
+
+    if ses:
+        lines.append("⏱️ 使用时长：")
+        for app, secs in sorted(ses.items(), key=lambda x: x[1], reverse=True):
+            m, s = divmod(secs, 60)
+            lines.append(f"  {app}: {m}分{s}秒")
+
+    msg = "\n".join(lines)
+
+    # 发送 Bark 弹窗
+    if BARK_KEY and BARK_KEY != "e4xKQoCEQ4fnzNW6UnqiBU":
+        try:
+            url = f"https://api.day.app/{BARK_KEY}/🔔自动查岗/{msg}"
+            r = requests.get(url, timeout=10)
+            bark_result = "推送成功" if r.status_code == 200 else "推送失败"
+        except Exception as e:
+            bark_result = f"推送异常：{e}"
+    else:
+        bark_result = "Bark Key 未配置"
+
+    return {"status": "ok", "bark": bark_result, "data": data}
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
