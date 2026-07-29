@@ -138,15 +138,13 @@ async def mcp(req: Request):
 
     return {"jsonrpc": "2.0", "id": rid,
             "error": {"code": -32601, "message": f"未知方法: {method}"}}
-# ==================== 定时自动查岗接口 ====================
+
 @app.get("/auto-check")
 async def auto_check():
-    """定时任务调用：自动查岗并弹窗"""
     data = _get_summary_data()
     apps = data.get("recent_apps", [])
     ses = data.get("sessions", {})
 
-    # 组装查岗消息
     lines = []
     if apps:
         lines.append(f"📱 最近打开：{', '.join(apps)}")
@@ -161,8 +159,7 @@ async def auto_check():
 
     msg = "\n".join(lines)
 
-    # 发送 Bark 弹窗
-    if BARK_KEY and BARK_KEY != "e4xKQoCEQ4fnzNW6UnqiBU":
+    if BARK_KEY:
         try:
             url = f"https://api.day.app/{BARK_KEY}/🔔自动查岗/{msg}"
             r = requests.get(url, timeout=10)
@@ -177,4 +174,3 @@ async def auto_check():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
-
