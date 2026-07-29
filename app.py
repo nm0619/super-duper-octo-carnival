@@ -172,7 +172,8 @@ async def auto_check():
 
     msg = "\n".join(lines)
 
-    if BARK_KEY and BARK_KEY != "e4xKQoCEQ4fnzNW6UnqiBU":
+    
+if BARK_KEY:
         try:
             url = f"https://api.day.app/{BARK_KEY}/🔔自动查岗/{msg}"
             r = requests.get(url, timeout=10)
