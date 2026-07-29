@@ -12,6 +12,7 @@ JST = timedelta(hours=9)
 AUTH_TOKEN = os.environ.get("AUTH_TOKEN", "baobao521")
 BARK_KEY = os.environ.get("BARK_API_KEY", "e4xKQoCEQ4fnzNW6UnqiBU")
 
+# ==================== 数据库初始化 ====================
 def init_db():
     conn = sqlite3.connect(str(DB_PATH))
     conn.execute("""CREATE TABLE IF NOT EXISTS records (
@@ -25,6 +26,7 @@ def init_db():
 
 init_db()
 
+# ==================== FastAPI 应用 ====================
 app = FastAPI(title="查岗系统")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
@@ -32,6 +34,7 @@ class ReportBody(BaseModel):
     app_name: str
     event: str
 
+# ==================== 上报接口（iPhone 用）====================
 @app.post("/report")
 async def report(body: ReportBody, req: Request):
     auth = req.headers.get("Authorization", "")
@@ -45,11 +48,14 @@ async def report(body: ReportBody, req: Request):
     conn.close()
     return {"status": "ok"}
 
+# ==================== 存活检测 ====================
 @app.get("/ping")
 async def ping():
     return "pong"
 
+# ==================== 查岗接口 ====================
 def _get_summary_data():
+    """提取数据库查询逻辑，供 HTTP 端点和 MCP 工具共用"""
     conn = sqlite3.connect(str(DB_PATH))
     cur = conn.cursor()
     cur.execute("SELECT app_name, event, timestamp FROM records ORDER BY id DESC LIMIT 5")
@@ -75,7 +81,9 @@ def _get_summary_data():
 async def summary():
     return _get_summary_data()
 
+# ==================== MCP 工具函数 ====================
 def check_on_wife(limit=10):
+    """查岗：返回最近打开的 App 和使用时长"""
     try:
         data = _get_summary_data()
     except Exception as e:
@@ -89,7 +97,8 @@ def check_on_wife(limit=10):
             lines.append(f"  {app}: {m}分{s}秒")
     return "\n".join(lines)
 
-def bark_alert(title="哥哥", content=""):
+def bark_alert(title="凌止", content=""):
+    """给手机发 Bark 推送弹窗"""
     if not content:
         return "内容不能为空"
     url = f"https://api.day.app/{BARK_KEY}/{title}/{content}"
@@ -99,6 +108,7 @@ def bark_alert(title="哥哥", content=""):
     except Exception as e:
         return f"推送异常：{e}"
 
+# ==================== MCP 工具定义 ====================
 TOOLS = [
     {"name": "check_on_wife", "description": "查岗老婆的手机活动",
      "inputSchema": {"type": "object", "properties": {"limit": {"type": "integer"}}}},
@@ -110,6 +120,7 @@ TOOLS = [
 
 FUNCS = {"check_on_wife": check_on_wife, "bark_alert": bark_alert}
 
+# ==================== MCP JSON-RPC 端点 ====================
 @app.post("/mcp")
 async def mcp(req: Request):
     body = await req.json()
@@ -139,8 +150,10 @@ async def mcp(req: Request):
     return {"jsonrpc": "2.0", "id": rid,
             "error": {"code": -32601, "message": f"未知方法: {method}"}}
 
+# ==================== 定时自动查岗接口 ====================
 @app.get("/auto-check")
 async def auto_check():
+    """定时任务调用：自动查岗并弹窗"""
     data = _get_summary_data()
     apps = data.get("recent_apps", [])
     ses = data.get("sessions", {})
@@ -159,7 +172,7 @@ async def auto_check():
 
     msg = "\n".join(lines)
 
-    if BARK_KEY:
+    if BARK_KEY and BARK_KEY != "e4xKQoCEQ4fnzNW6UnqiBU":
         try:
             url = f"https://api.day.app/{BARK_KEY}/🔔自动查岗/{msg}"
             r = requests.get(url, timeout=10)
@@ -171,6 +184,7 @@ async def auto_check():
 
     return {"status": "ok", "bark": bark_result, "data": data}
 
+# ==================== 启动 ====================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
