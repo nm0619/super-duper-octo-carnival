@@ -53,9 +53,8 @@ async def report(body: ReportBody, req: Request):
 async def ping():
     return "pong"
 
-# ==================== 查岗接口 ====================
+# ==================== 查岗数据 ====================
 def _get_summary_data():
-    """提取数据库查询逻辑，供 HTTP 端点和 MCP 工具共用"""
     conn = sqlite3.connect(str(DB_PATH))
     cur = conn.cursor()
     cur.execute("SELECT app_name, event, timestamp FROM records ORDER BY id DESC LIMIT 5")
@@ -81,9 +80,8 @@ def _get_summary_data():
 async def summary():
     return _get_summary_data()
 
-# ==================== MCP 工具函数 ====================
+# ==================== MCP 工具：被动查岗 ====================
 def check_on_wife(limit=10):
-    """查岗：返回最近打开的 App 和使用时长"""
     try:
         data = _get_summary_data()
     except Exception as e:
@@ -97,8 +95,8 @@ def check_on_wife(limit=10):
             lines.append(f"  {app}: {m}分{s}秒")
     return "\n".join(lines)
 
-def bark_alert(title="凌止", content=""):
-    """给手机发 Bark 推送弹窗"""
+# ==================== MCP 工具：弹窗 ====================
+def bark_alert(title="哥哥", content=""):
     if not content:
         return "内容不能为空"
     url = f"https://api.day.app/{BARK_KEY}/{title}/{content}"
@@ -108,7 +106,36 @@ def bark_alert(title="凌止", content=""):
     except Exception as e:
         return f"推送异常：{e}"
 
-# ==================== MCP 工具定义 ====================
+# ==================== 定时主动查岗接口（新功能！）====================
+@app.get("/auto-check")
+async def auto_check():
+    """定时任务触发：自动查岗并弹窗"""
+    data = _get_summary_data()
+    apps = data.get("recent_apps", [])
+    ses = data.get("sessions", {})
+
+    if not apps:
+        return {"status": "no_data", "message": "暂无活动记录"}
+
+    lines = [f"🔍 主动查岗报告：最近打开 {', '.join(apps)}"]
+    if ses:
+        for app, secs in sorted(ses.items(), key=lambda x: x[1], reverse=True):
+            m, s = divmod(secs, 60)
+            lines.append(f"  📱 {app}: {m}分{s}秒")
+
+    msg = "\n".join(lines)
+
+    if BARK_KEY:
+        try:
+            url = f"https://api.day.app/{BARK_KEY}/🔍主动查岗/{msg}?sound=choo"
+            r = requests.get(url, timeout=10)
+            return {"status": "ok", "bark": "推送成功" if r.status_code == 200 else "推送失败", "report": msg}
+        except Exception as e:
+            return {"status": "error", "bark": f"推送异常：{e}", "report": msg}
+    else:
+        return {"status": "no_bark", "report": msg}
+
+# ==================== MCP 工具列表 ====================
 TOOLS = [
     {"name": "check_on_wife", "description": "查岗老婆的手机活动",
      "inputSchema": {"type": "object", "properties": {"limit": {"type": "integer"}}}},
@@ -149,41 +176,6 @@ async def mcp(req: Request):
 
     return {"jsonrpc": "2.0", "id": rid,
             "error": {"code": -32601, "message": f"未知方法: {method}"}}
-
-# ==================== 定时自动查岗接口 ====================
-@app.get("/auto-check")
-async def auto_check():
-    """定时任务调用：自动查岗并弹窗"""
-    data = _get_summary_data()
-    apps = data.get("recent_apps", [])
-    ses = data.get("sessions", {})
-
-    lines = []
-    if apps:
-        lines.append(f"📱 最近打开：{', '.join(apps)}")
-    else:
-        lines.append("📱 最近没有活动记录")
-
-    if ses:
-        lines.append("⏱️ 使用时长：")
-        for app, secs in sorted(ses.items(), key=lambda x: x[1], reverse=True):
-            m, s = divmod(secs, 60)
-            lines.append(f"  {app}: {m}分{s}秒")
-
-    msg = "\n".join(lines)
-
-    
-if BARK_KEY:
-        try:
-            url = f"https://api.day.app/{BARK_KEY}/🔔自动查岗/{msg}"
-            r = requests.get(url, timeout=10)
-            bark_result = "推送成功" if r.status_code == 200 else "推送失败"
-        except Exception as e:
-            bark_result = f"推送异常：{e}"
-    else:
-        bark_result = "Bark Key 未配置"
-
-    return {"status": "ok", "bark": bark_result, "data": data}
 
 # ==================== 启动 ====================
 if __name__ == "__main__":
