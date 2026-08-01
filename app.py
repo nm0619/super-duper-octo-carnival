@@ -11,10 +11,6 @@ DB_PATH = BASE_DIR / "records.db"
 JST = timedelta(hours=9)
 AUTH_TOKEN = os.environ.get("AUTH_TOKEN", "baobao521")
 
-# 会话时长上限：超过 6 小时的直接丢弃，过滤异常数据
-MAX_SESSION_SECONDS = 6 * 3600
-
-
 def init_db():
     conn = sqlite3.connect(str(DB_PATH))
     conn.execute("""CREATE TABLE IF NOT EXISTS records (
@@ -22,20 +18,17 @@ def init_db():
         app_name TEXT NOT NULL,
         event TEXT NOT NULL,
         timestamp TEXT NOT NULL)""")
-    conn.commit()
-    conn.close()
-
+    conn.commit(); conn.close()
 
 init_db()
 
 app = FastAPI(title="查岗系统")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
-
+app.add_middleware(CORSMiddleware, allow_origins=["*"],
+                   allow_methods=["*"], allow_headers=["*"])
 
 class ReportBody(BaseModel):
     app_name: str
     event: str
-
 
 @app.post("/report")
 async def report(body: ReportBody, req: Request):
@@ -44,17 +37,13 @@ async def report(body: ReportBody, req: Request):
         raise HTTPException(401, "Unauthorized")
     now = datetime.utcnow().isoformat()
     conn = sqlite3.connect(str(DB_PATH))
-    conn.execute("INSERT INTO records (app_name, event, timestamp) VALUES (?, ?, ?)",
-                 (body.app_name, body.event, now))
-    conn.commit()
-    conn.close()
+    conn.execute("INSERT INTO records VALUES (?, ?, ?)", (body.app_name, body.event, now))
+    conn.commit(); conn.close()
     return {"status": "ok"}
-
 
 @app.get("/ping")
 async def ping():
     return "pong"
-
 
 @app.get("/activity/summary")
 async def summary():
@@ -65,31 +54,19 @@ async def summary():
     cur.execute("SELECT app_name, event, timestamp FROM records ORDER BY id ASC")
     rows = cur.fetchall()
     conn.close()
-
     sessions, opens = {}, {}
-
     for r in rows:
         app, ev, ts = r
-        ts = datetime.fromisoformat(ts)
         if ev == "open":
-            # 如果上一个还没 close，先按新 open 的时间结算掉（防止悬空堆积）
-            if app in opens:
-                gap = int((ts - opens[app]).total_seconds())
-                if 0 < gap <= MAX_SESSION_SECONDS:
-                    sessions[app] = sessions.get(app, 0) + gap
-            opens[app] = ts
-        elif ev == "close":
-            if app in opens:
-                gap = int((ts - opens[app]).total_seconds())
-                if 0 < gap <= MAX_SESSION_SECONDS:
-                    sessions[app] = sessions.get(app, 0) + gap
-                del opens[app]
-
+            opens[app] = datetime.fromisoformat(ts)
+        elif ev == "close" and app in opens:
+            gap = int((datetime.fromisoformat(ts) - opens[app]).total_seconds())
+            sessions[app] = sessions.get(app, 0) + gap
+            del opens[app]
     return {
         "recent_apps": [r[0] for r in recent],
         "sessions": sessions
     }
-
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
