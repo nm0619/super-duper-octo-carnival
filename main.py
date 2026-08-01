@@ -4,7 +4,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import uvicor
+import uvicorn
 BASE_DIR = Path(__file__).parent
 DB_PATH = BASE_DIR / "records.db"
 JST = timedelta(hours=9)
