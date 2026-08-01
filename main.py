@@ -1,50 +1,55 @@
-import sqlite3, os
+import os, sqlite3, requests, uvicorn
 from datetime import datetime, timedelta
 from pathlib import Path
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-import uvicorn
 
-BASE_DIR = Path(__file__).parent
-DB_PATH = BASE_DIR / "records.db"
-JST = timedelta(hours=9)
+# ---------- 配置 ----------
+DB_PATH = Path(__file__).parent / "activity.db"
 AUTH_TOKEN = os.environ.get("AUTH_TOKEN", "baobao521")
+BARK_KEY = os.environ.get("BARK_API_KEY", "e4xKQoCEQ4fnzNW6UnqiBU")
 
+# ---------- 初始化数据库 ----------
 def init_db():
     conn = sqlite3.connect(str(DB_PATH))
-    conn.execute("""CREATE TABLE IF NOT EXISTS records (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        app_name TEXT NOT NULL,
-        event TEXT NOT NULL,
-        timestamp TEXT NOT NULL)""")
-    conn.commit(); conn.close()
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            app_name TEXT NOT NULL,
+            event TEXT NOT NULL,
+            timestamp TEXT NOT NULL
+        )
+    """)
+    conn.commit()
+    conn.close()
 
 init_db()
 
-app = FastAPI(title="查岗系统")
+# ---------- FastAPI 应用 ----------
+app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"],
                    allow_methods=["*"], allow_headers=["*"])
 
-class ReportBody(BaseModel):
-    app_name: str
-    event: str
-
+# ---------- 上报接口（快捷指令调用） ----------
 @app.post("/report")
-async def report(body: ReportBody, req: Request):
+async def report(req: Request):
     auth = req.headers.get("Authorization", "")
-    if auth != f"Bearer {AUTH_TOKEN}":
-        raise HTTPException(401, "Unauthorized")
+    if AUTH_TOKEN and auth != f"Bearer {AUTH_TOKEN}":
+        return {"status": "error", "message": "unauthorized"}
+    data = await req.json()
+    app_name = (data.get("app_name") or "").strip() or "未知App"
+    event = data.get("event", "open")
     now = datetime.utcnow().isoformat()
     conn = sqlite3.connect(str(DB_PATH))
-    conn.execute("INSERT INTO records (app_name, event, timestamp) VALUES (?, ?, ?)", (body.app_name, body.event, now))
-    conn.commit(); conn.close()
-    return {"status": "ok"}
+    cur = conn.cursor()
+    cur.execute("INSERT INTO records (app_name, event, timestamp) VALUES (?,?,?)",
+                (app_name, event, now))
+    conn.commit()
+    conn.close()
+    return {"status": "ok", "received": {"app_name": app_name, "event": event}}
 
-@app.get("/ping")
-async def ping():
-    return "pong"
-
+# ---------- 汇总接口（MCP 查询用） ----------
 @app.get("/activity/summary")
 async def summary():
     conn = sqlite3.connect(str(DB_PATH))
@@ -54,20 +59,23 @@ async def summary():
     cur.execute("SELECT app_name, event, timestamp FROM records ORDER BY id ASC")
     rows = cur.fetchall()
     conn.close()
-    sessions, opens = {}, {}
+
+    # 智能配对：打开进栈，关闭取最近一次打开配对（不要求名字完全一致）
+    sessions, opens_stack = {}, []
     for r in rows:
         app, ev, ts = r
         if ev == "open":
-            opens[app] = datetime.fromisoformat(ts)
-        elif ev == "close" and app in opens:
-            gap = int((datetime.fromisoformat(ts) - opens[app]).total_seconds())
-            sessions[app] = sessions.get(app, 0) + gap
-            del opens[app]
+            opens_stack.append((app, datetime.fromisoformat(ts)))
+        elif ev == "close" and opens_stack:
+            app_open, t_open = opens_stack.pop()
+            gap = int((datetime.fromisoformat(ts) - t_open).total_seconds())
+            sessions[app_open] = sessions.get(app_open, 0) + gap
+
     return {
         "recent_apps": [r[0] for r in recent],
         "sessions": sessions
     }
 
+# ---------- 本地运行 ----------
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000)
