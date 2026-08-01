@@ -5,6 +5,7 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
+
 BASE_DIR = Path(__file__).parent
 DB_PATH = BASE_DIR / "records.db"
 JST = timedelta(hours=9)
@@ -36,7 +37,7 @@ async def report(body: ReportBody, req: Request):
         raise HTTPException(401, "Unauthorized")
     now = datetime.utcnow().isoformat()
     conn = sqlite3.connect(str(DB_PATH))
-    conn.execute("INSERT INTO records VALUES (?, ?, ?)", (body.app_name, body.event, now))
+    conn.execute("INSERT INTO records (app_name, event, timestamp) VALUES (?, ?, ?)", (body.app_name, body.event, now))
     conn.commit(); conn.close()
     return {"status": "ok"}
 
