@@ -9,6 +9,9 @@ DB_PATH = Path(__file__).parent / "activity.db"
 AUTH_TOKEN = os.environ.get("AUTH_TOKEN", "baobao521")
 BARK_KEY = os.environ.get("BARK_API_KEY", "e4xKQoCEQ4fnzNW6UnqiBU")
 
+# 北京时区偏移（用于判断"今天"）
+BEIJING_OFFSET = timedelta(hours=8)
+
 # ---------- 初始化数据库 ----------
 def init_db():
     conn = sqlite3.connect(str(DB_PATH))
@@ -49,14 +52,30 @@ async def report(req: Request):
     conn.close()
     return {"status": "ok", "received": {"app_name": app_name, "event": event}}
 
-# ---------- 汇总接口（MCP 查询用） ----------
+# ---------- 汇总接口（MCP 查询用）----------
 @app.get("/activity/summary")
 async def summary():
     conn = sqlite3.connect(str(DB_PATH))
     cur = conn.cursor()
-    cur.execute("SELECT app_name, event, timestamp FROM records ORDER BY id DESC LIMIT 5")
+
+    # ★ 新增：只统计"今天"（北京时间）的记录 ★
+    beijing_now = datetime.utcnow() + BEIJING_OFFSET
+    today_str = beijing_now.date().isoformat()   # 例如 "2025-01-15"
+
+    # 最近打开（只看今天的最近5条）
+    cur.execute(
+        "SELECT app_name, event, timestamp FROM records "
+        "WHERE date(timestamp, '+8 hours') = ? ORDER BY id DESC LIMIT 5",
+        (today_str,)
+    )
     recent = cur.fetchall()
-    cur.execute("SELECT app_name, event, timestamp FROM records ORDER BY id ASC")
+
+    # 今天的所有记录，按时间正序（用于配对算时长）
+    cur.execute(
+        "SELECT app_name, event, timestamp FROM records "
+        "WHERE date(timestamp, '+8 hours') = ? ORDER BY id ASC",
+        (today_str,)
+    )
     rows = cur.fetchall()
     conn.close()
 
