@@ -1,4 +1,4 @@
-import os, sqlite3, requests, uvicorn
+import os, sqlite3, requests, uvicorn, base64, json
 from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import unquote
@@ -11,7 +11,7 @@ AUTH_TOKEN = os.environ.get("AUTH_TOKEN", "baobao521")
 BARK_KEY = os.environ.get("BARK_API_KEY", "e4xKQoCEQ4fnzNW6UnqiBU")
 BEIJING_OFFSET = timedelta(hours=8)
 
-# ---------- 编码翻译官（终极版） ----------
+# ---------- 编码处理（三保险：Base64 → URL → 乱码修复） ----------
 GARBLED_MARKERS = "锛鏄姘閮澶鐨涓鏍鍦浜鍏鍦板樊鎬т笂涓嬪墠鍚庡乏鍙"
 
 def _looks_garbled(text):
@@ -31,14 +31,23 @@ def repair_encoding(text):
     return text
 
 def clean_field(value):
-    """统一清洗：先解 URL 编码，再修历史乱码"""
     if value is None:
         return None
     value = str(value).strip()
+    # ① Base64 解码（快捷指令编码后的纯ASCII，最稳）
+    if value and all(c in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=" for c in value):
+        try:
+            decoded = base64.b64decode(value).decode("utf-8")
+            if decoded and any(ord(ch) > 127 for ch in decoded):
+                return decoded
+        except Exception:
+            pass
+    # ② URL 解码
     try:
-        value = unquote(value)   # %E6%B0%B4 → 水
+        value = unquote(value)
     except Exception:
         pass
+    # ③ 乱码修复
     return repair_encoding(value)
 
 # ---------- 初始化数据库 ----------
@@ -78,6 +87,7 @@ async def report(req: Request):
     if AUTH_TOKEN and auth != f"Bearer {AUTH_TOKEN}":
         return {"status": "error", "message": "unauthorized"}
     data = await req.json()
+    print("📱 收到上报原始数据:", json.dumps(data, ensure_ascii=False)[:500])
     app_name = clean_field(data.get("app_name")) or "未知App"
     event = data.get("event", "open")
     now = datetime.utcnow().isoformat()
