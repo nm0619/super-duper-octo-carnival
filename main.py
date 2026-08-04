@@ -1,4 +1,4 @@
-import os, sqlite3, requests, uvicorn, re
+import os, sqlite3, requests, uvicorn
 from datetime import datetime, timedelta
 from pathlib import Path
 from fastapi import FastAPI, Request
@@ -12,9 +12,10 @@ BARK_KEY = os.environ.get("BARK_API_KEY", "e4xKQoCEQ4fnzNW6UnqiBU")
 # 北京时区偏移（用于判断"今天"）
 BEIJING_OFFSET = timedelta(hours=8)
 
-# ---------- ★ 新增：编码翻译官 ★ ----------
-# iOS 快捷指令发中文时，UTF-8 字节被服务器当成 GBK 读了，产生乱码。
-# 这里把"被 GBK/Latin-1 误读的文本"还原回正常中文。
+# ---------- ★ 修复版：编码翻译官 ★ ----------
+# iOS 快捷指令发中文时，UTF-8 字节被当成 GBK 读，产生乱码。
+# 修复：把乱码按 GBK 编码还原成 UTF-8 字节再解码。
+# errors="ignore" 是关键：遇到 � 等坏字符直接跳过，不整段放弃。
 GARBLED_MARKERS = "锛鏄姘閮澶鐨涓鏍鍦浜鍏鍦板樊鎬т笂涓嬪墠鍚庡乏鍙"
 
 def _looks_garbled(text):
@@ -25,13 +26,12 @@ def repair_encoding(text):
         return text
     if not _looks_garbled(text):
         return text
-    for enc in ("gbk", "latin-1"):
-        try:
-            repaired = text.encode(enc).decode("utf-8")
-            if "\ufffd" not in repaired:
-                return repaired
-        except Exception:
-            continue
+    try:
+        repaired = text.encode("gbk", errors="ignore").decode("utf-8", errors="ignore")
+        if repaired and "\ufffd" not in repaired:
+            return repaired
+    except Exception:
+        pass
     return text
 
 # ---------- 初始化数据库 ----------
@@ -46,7 +46,6 @@ def init_db():
             timestamp TEXT NOT NULL
         )
     """)
-    # 手机状态表
     cur.execute("""
         CREATE TABLE IF NOT EXISTS device_state (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -79,7 +78,6 @@ async def report(req: Request):
     cur = conn.cursor()
     cur.execute("INSERT INTO records (app_name, event, timestamp) VALUES (?,?,?)",
                 (app_name, event, now))
-    # 手机状态（每个字段都过一遍翻译官）
     battery = repair_encoding(data.get("battery"))
     location = repair_encoding(data.get("location"))
     device = repair_encoding(data.get("device"))
@@ -100,18 +98,14 @@ async def report(req: Request):
 async def summary():
     conn = sqlite3.connect(str(DB_PATH))
     cur = conn.cursor()
-
-    # 只统计"今天"（北京时间）的记录
     beijing_now = datetime.utcnow() + BEIJING_OFFSET
     today_str = beijing_now.date().isoformat()
-
     cur.execute(
         "SELECT app_name, event, timestamp FROM records "
         "WHERE date(timestamp, '+8 hours') = ? ORDER BY id DESC LIMIT 5",
         (today_str,)
     )
     recent = cur.fetchall()
-
     cur.execute(
         "SELECT app_name, event, timestamp FROM records "
         "WHERE date(timestamp, '+8 hours') = ? ORDER BY id ASC",
@@ -119,7 +113,6 @@ async def summary():
     )
     rows = cur.fetchall()
     conn.close()
-
     sessions, opens_stack = {}, []
     for r in rows:
         app, ev, ts = r
@@ -129,11 +122,15 @@ async def summary():
             app_open, t_open = opens_stack.pop()
             gap = int((datetime.fromisoformat(ts) - t_open).total_seconds())
             sessions[app_open] = sessions.get(app_open, 0) + gap
-
     return {
         "recent_apps": [r[0] for r in recent],
         "sessions": sessions
     }
+
+# ---------- ★ 新增：自测接口（先验证翻译官，再跑快捷指令） ----------
+@app.get("/debug/repair")
+async def debug_repair(text: str = ""):
+    return {"original": text, "repaired": repair_encoding(text)}
 
 # ---------- 手机状态查询接口 ----------
 @app.get("/device/state")
