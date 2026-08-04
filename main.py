@@ -1,4 +1,4 @@
-import os, sqlite3, requests, uvicorn
+import os, sqlite3, requests, uvicorn, re
 from datetime import datetime, timedelta
 from pathlib import Path
 from fastapi import FastAPI, Request
@@ -12,6 +12,28 @@ BARK_KEY = os.environ.get("BARK_API_KEY", "e4xKQoCEQ4fnzNW6UnqiBU")
 # 北京时区偏移（用于判断"今天"）
 BEIJING_OFFSET = timedelta(hours=8)
 
+# ---------- ★ 新增：编码翻译官 ★ ----------
+# iOS 快捷指令发中文时，UTF-8 字节被服务器当成 GBK 读了，产生乱码。
+# 这里把"被 GBK/Latin-1 误读的文本"还原回正常中文。
+GARBLED_MARKERS = "锛鏄姘閮澶鐨涓鏍鍦浜鍏鍦板樊鎬т笂涓嬪墠鍚庡乏鍙"
+
+def _looks_garbled(text):
+    return any(ch in text for ch in GARBLED_MARKERS)
+
+def repair_encoding(text):
+    if not isinstance(text, str) or not text:
+        return text
+    if not _looks_garbled(text):
+        return text
+    for enc in ("gbk", "latin-1"):
+        try:
+            repaired = text.encode(enc).decode("utf-8")
+            if "\ufffd" not in repaired:
+                return repaired
+        except Exception:
+            continue
+    return text
+
 # ---------- 初始化数据库 ----------
 def init_db():
     conn = sqlite3.connect(str(DB_PATH))
@@ -24,7 +46,7 @@ def init_db():
             timestamp TEXT NOT NULL
         )
     """)
-    # ★ 新增：手机状态表 ★
+    # 手机状态表
     cur.execute("""
         CREATE TABLE IF NOT EXISTS device_state (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -50,20 +72,20 @@ async def report(req: Request):
     if AUTH_TOKEN and auth != f"Bearer {AUTH_TOKEN}":
         return {"status": "error", "message": "unauthorized"}
     data = await req.json()
-    app_name = (data.get("app_name") or "").strip() or "未知App"
+    app_name = repair_encoding((data.get("app_name") or "").strip() or "未知App")
     event = data.get("event", "open")
     now = datetime.utcnow().isoformat()
     conn = sqlite3.connect(str(DB_PATH))
     cur = conn.cursor()
     cur.execute("INSERT INTO records (app_name, event, timestamp) VALUES (?,?,?)",
                 (app_name, event, now))
-    # ★ 新增：把手机状态也存进 device_state 表 ★
-    battery = data.get("battery")
-    location = data.get("location")
-    device = data.get("device")
-    weather = data.get("weather")
-    brightness = data.get("brightness")
-    volume = data.get("volume")
+    # 手机状态（每个字段都过一遍翻译官）
+    battery = repair_encoding(data.get("battery"))
+    location = repair_encoding(data.get("location"))
+    device = repair_encoding(data.get("device"))
+    weather = repair_encoding(data.get("weather"))
+    brightness = repair_encoding(data.get("brightness"))
+    volume = repair_encoding(data.get("volume"))
     if battery or location or device or weather or brightness or volume:
         cur.execute(
             "INSERT INTO device_state (battery, location, device, weather, brightness, volume, timestamp) VALUES (?,?,?,?,?,?,?)",
@@ -79,11 +101,10 @@ async def summary():
     conn = sqlite3.connect(str(DB_PATH))
     cur = conn.cursor()
 
-    # ★ 新增：只统计"今天"（北京时间）的记录 ★
+    # 只统计"今天"（北京时间）的记录
     beijing_now = datetime.utcnow() + BEIJING_OFFSET
-    today_str = beijing_now.date().isoformat()   # 例如 "2025-01-15"
+    today_str = beijing_now.date().isoformat()
 
-    # 最近打开（只看今天的最近5条）
     cur.execute(
         "SELECT app_name, event, timestamp FROM records "
         "WHERE date(timestamp, '+8 hours') = ? ORDER BY id DESC LIMIT 5",
@@ -91,7 +112,6 @@ async def summary():
     )
     recent = cur.fetchall()
 
-    # 今天的所有记录，按时间正序（用于配对算时长）
     cur.execute(
         "SELECT app_name, event, timestamp FROM records "
         "WHERE date(timestamp, '+8 hours') = ? ORDER BY id ASC",
@@ -100,7 +120,6 @@ async def summary():
     rows = cur.fetchall()
     conn.close()
 
-    # 智能配对：打开进栈，关闭取最近一次打开配对（不要求名字完全一致）
     sessions, opens_stack = {}, []
     for r in rows:
         app, ev, ts = r
@@ -116,7 +135,7 @@ async def summary():
         "sessions": sessions
     }
 
-# ---------- ★ 新增：手机状态查询接口 ★ ----------
+# ---------- 手机状态查询接口 ----------
 @app.get("/device/state")
 async def device_state():
     conn = sqlite3.connect(str(DB_PATH))
