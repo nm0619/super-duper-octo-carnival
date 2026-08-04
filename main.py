@@ -101,6 +101,7 @@ async def report(req: Request):
     weather = clean_field(data.get("weather"))
     brightness = clean_field(data.get("brightness"))
     volume = clean_field(data.get("volume"))
+    print("🧹 清洗后:", json.dumps({"battery": battery, "location": location, "device": device, "weather": weather}, ensure_ascii=False)[:500])
     if battery or location or device or weather or brightness or volume:
         cur.execute(
             "INSERT INTO device_state (battery, location, device, weather, brightness, volume, timestamp) VALUES (?,?,?,?,?,?,?)",
@@ -144,7 +145,7 @@ async def summary():
         "sessions": sessions
     }
 
-# ---------- 手机状态查询接口 ----------
+# ---------- 手机状态查询接口（读取时也清洗） ----------
 @app.get("/device/state")
 async def device_state():
     conn = sqlite3.connect(str(DB_PATH))
@@ -157,11 +158,17 @@ async def device_state():
     conn.close()
     if not row:
         return {"state": None}
-    return {"state": {
-        "battery": row[0], "location": row[1], "device": row[2],
-        "weather": row[3], "brightness": row[4], "volume": row[5],
+    cleaned = {
+        "battery": clean_field(row[0]),
+        "location": clean_field(row[1]),
+        "device": clean_field(row[2]),
+        "weather": clean_field(row[3]),
+        "brightness": clean_field(row[4]),
+        "volume": clean_field(row[5]),
         "timestamp": row[6]
-    }}
+    }
+    print("📖 读取并清洗:", json.dumps(cleaned, ensure_ascii=False)[:500])
+    return {"state": cleaned}
 
 # ---------- 本地运行 ----------
 if __name__ == "__main__":
