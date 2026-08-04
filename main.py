@@ -35,7 +35,6 @@ def clean_field(value):
     if value is None:
         return None
     value = str(value).strip()
-    # ① Base64 解码（快捷指令编码后的纯ASCII，最稳）
     if value and all(c in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=" for c in value):
         try:
             decoded = base64.b64decode(value).decode("utf-8")
@@ -43,12 +42,10 @@ def clean_field(value):
                 return decoded
         except Exception:
             pass
-    # ② URL 解码
     try:
         value = unquote(value)
     except Exception:
         pass
-    # ③ 乱码修复
     return repair_encoding(value)
 
 # ---------- 初始化数据库 ----------
@@ -146,7 +143,7 @@ async def summary():
         "sessions": sessions
     }
 
-# ---------- 手机状态查询接口（中文全部转 \uXXXX 数字密码，物理上不可能乱码） ----------
+# ---------- 手机状态查询接口（中文原文 + 显式声明 UTF-8，浏览器不再乱码） ----------
 @app.get("/device/state")
 async def device_state():
     conn = sqlite3.connect(str(DB_PATH))
@@ -171,10 +168,10 @@ async def device_state():
     print("📖 读取并清洗:", json.dumps(cleaned, ensure_ascii=False)[:500])
     loc = cleaned.get("location") or ""
     codes = [ord(ch) for ch in loc[:20]]
-    # ★ 关键：ensure_ascii=True，中文全部变成 \u6c34 这种纯ASCII ★
     payload = {"state": cleaned, "debug_location_codes": codes}
-    body = json.dumps(payload, ensure_ascii=True).encode("utf-8")
-    return Response(content=body, media_type="application/json")
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    # ★ 关键：显式声明 charset=utf-8，告诉浏览器按 UTF-8 解码 ★
+    return Response(content=body, media_type="application/json; charset=utf-8")
 
 # ---------- 本地运行 ----------
 if __name__ == "__main__":
