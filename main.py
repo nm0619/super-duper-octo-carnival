@@ -145,7 +145,7 @@ async def summary():
         "sessions": sessions
     }
 
-# ---------- 手机状态查询接口（读取时也清洗） ----------
+# ---------- 手机状态查询接口（读取时也清洗 + 指纹诊断） ----------
 @app.get("/device/state")
 async def device_state():
     conn = sqlite3.connect(str(DB_PATH))
@@ -168,7 +168,10 @@ async def device_state():
         "timestamp": row[6]
     }
     print("📖 读取并清洗:", json.dumps(cleaned, ensure_ascii=False)[:500])
-    return {"state": cleaned}
+    # ★ 指纹：把 location 前20个字的 unicode 码点打出来 ★
+    loc = cleaned.get("location") or ""
+    codes = [ord(ch) for ch in loc[:20]]
+    return {"state": cleaned, "debug_location_codes": codes}
 
 # ---------- 本地运行 ----------
 if __name__ == "__main__":
