@@ -24,6 +24,15 @@ def init_db():
             timestamp TEXT NOT NULL
         )
     """)
+    # ★ 新增：手机状态表 ★
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS device_state (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            battery TEXT, location TEXT, device TEXT,
+            weather TEXT, brightness TEXT, volume TEXT,
+            timestamp TEXT NOT NULL
+        )
+    """)
     conn.commit()
     conn.close()
 
@@ -48,6 +57,18 @@ async def report(req: Request):
     cur = conn.cursor()
     cur.execute("INSERT INTO records (app_name, event, timestamp) VALUES (?,?,?)",
                 (app_name, event, now))
+    # ★ 新增：把手机状态也存进 device_state 表 ★
+    battery = data.get("battery")
+    location = data.get("location")
+    device = data.get("device")
+    weather = data.get("weather")
+    brightness = data.get("brightness")
+    volume = data.get("volume")
+    if battery or location or device or weather or brightness or volume:
+        cur.execute(
+            "INSERT INTO device_state (battery, location, device, weather, brightness, volume, timestamp) VALUES (?,?,?,?,?,?,?)",
+            (battery, location, device, weather, brightness, volume, now)
+        )
     conn.commit()
     conn.close()
     return {"status": "ok", "received": {"app_name": app_name, "event": event}}
@@ -94,6 +115,25 @@ async def summary():
         "recent_apps": [r[0] for r in recent],
         "sessions": sessions
     }
+
+# ---------- ★ 新增：手机状态查询接口 ★ ----------
+@app.get("/device/state")
+async def device_state():
+    conn = sqlite3.connect(str(DB_PATH))
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT battery, location, device, weather, brightness, volume, timestamp "
+        "FROM device_state ORDER BY id DESC LIMIT 1"
+    )
+    row = cur.fetchone()
+    conn.close()
+    if not row:
+        return {"state": None}
+    return {"state": {
+        "battery": row[0], "location": row[1], "device": row[2],
+        "weather": row[3], "brightness": row[4], "volume": row[5],
+        "timestamp": row[6]
+    }}
 
 # ---------- 本地运行 ----------
 if __name__ == "__main__":
